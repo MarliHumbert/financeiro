@@ -1,0 +1,130 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#14532d">
+<link rel="manifest" href="manifest.json"><link rel="icon" href="icon-192.png"><title>Controle Financeiro</title>
+<style>
+:root{--g:#14532d;--g2:#166534;--bg:#f4f7f5;--r:16px}*{box-sizing:border-box}
+body{margin:0;font:16px system-ui,sans-serif;background:var(--bg);color:#1a1a1a;padding-bottom:84px}
+header{background:var(--g);color:#fff;padding:14px 16px;display:flex;justify-content:space-between;align-items:center}
+header b{font-size:18px}header button{background:none;border:1px solid #fff8;color:#fff;border-radius:10px;padding:6px 10px}
+main{padding:14px;max-width:720px;margin:auto}
+.card{background:#fff;border-radius:var(--r);padding:14px;margin-bottom:12px;box-shadow:0 1px 4px #0001}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.k{font-size:13px;color:#555}.v{font-size:22px;font-weight:700;color:var(--g)}.neg{color:#b91c1c}
+input,select,textarea{width:100%;padding:13px;margin:4px 0 10px;border:1px solid #cbd5d0;border-radius:12px;font-size:16px;background:#fff}
+button.p{width:100%;background:var(--g);color:#fff;border:0;border-radius:14px;padding:16px;font-size:17px;font-weight:600}
+button.p:disabled{opacity:.5}button.s{background:#e7efe9;color:var(--g);border:0;border-radius:12px;padding:12px;font-size:15px;margin:2px 0}
+button.d{background:#fee2e2;color:#991b1b;border:0;border-radius:10px;padding:8px 10px}
+nav{position:fixed;bottom:0;left:0;right:0;background:#fff;display:flex;border-top:1px solid #ddd}
+nav button{flex:1;background:none;border:0;padding:10px 0;font-size:11px;color:#555}nav button span{display:block;font-size:22px}
+nav button.on{color:var(--g);font-weight:700}
+.row{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid #eee}.row:last-child{border:0}
+.tag{font-size:12px;background:#fee2e2;color:#991b1b;border-radius:8px;padding:2px 6px}.cut{text-decoration:line-through;color:#888}
+#toast{position:fixed;top:70px;left:12px;right:12px;padding:14px;border-radius:12px;color:#fff;display:none;z-index:9}
+.ok{background:var(--g2)}.er{background:#b91c1c}h2{margin:6px 0 10px;font-size:19px}label{font-size:13px;color:#555}
+</style></head><body>
+<header><b>💰 Controle Financeiro</b><span id="who"></span></header><div id="toast"></div><main id="app"></main><nav id="nav" hidden></nav>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script>
+const sb=supabase.createClient(CONFIG.SUPABASE_URL,CONFIG.SUPABASE_ANON_KEY);
+const $=s=>document.querySelector(s);
+const brl=n=>Number(n||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const dt=d=>new Date(d).toLocaleDateString('pt-BR');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num=v=>{let s=String(v??'').trim();if(!s)return NaN;if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');const n=Number(s);return isFinite(n)?Math.round(n*100)/100:NaN};
+const S={tab:'home',cli:[],prod:[],sal:[],ven:[],pag:[],sale:null,pay:null,busy:false,open:null,f:{}};
+function toast(m,err){const t=$('#toast');t.textContent=m;t.className=err?'er':'ok';t.style.display='block';setTimeout(()=>t.style.display='none',err?7000:2500)}
+function fail(e){const m=String(e?.message||e);toast(/fetch|network/i.test(m)?'Sem conexão: não sabemos se foi salvo. Toque em Salvar de novo (é seguro, não duplica) ou confira no Histórico.':m,1)}
+// ---------- login ----------
+function loginView(){$('#nav').hidden=true;$('#who').textContent='';$('#app').innerHTML=`<div class=card><h2>Entrar</h2><label>E-mail</label><input id=em type=email autocomplete=username><label>Senha</label><input id=pw type=password autocomplete=current-password><button class=p onclick=login()>Entrar</button></div>`}
+async function login(){const{error}=await sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value});if(error)toast('E-mail ou senha incorretos.',1)}
+async function logout(){await sb.auth.signOut()}
+sb.auth.onAuthStateChange((_e,s)=>{if(s){$('#who').innerHTML=`<button onclick=logout()>Sair</button>`;$('#nav').hidden=false;go('home')}else loginView()});
+// ---------- dados ----------
+async function load(){const q=[sb.from('clientes').select('*').order('nome'),sb.from('produtos').select('*').order('nome'),sb.from('saldo_clientes').select('*'),sb.from('vendas').select('*').order('criado_em',{ascending:false}),sb.from('pagamentos').select('*').order('criado_em',{ascending:false})];
+ const r=await Promise.all(q);const e=r.find(x=>x.error);if(e)throw e.error;[S.cli,S.prod,S.sal,S.ven,S.pag]=r.map(x=>x.data)}
+const nome=id=>esc((S.cli.find(c=>c.id===id)||{}).nome||'?');
+const saldoDe=id=>Number((S.sal.find(s=>s.cliente_id===id)||{}).saldo||0);
+const TABS=[['home','🏠','Início'],['cli','👥','Clientes'],['sale','🛒','Vender'],['pay','💵','Receber'],['prod','📦','Produtos'],['hist','📋','Histórico']];
+async function go(t){S.tab=t;S.open=null;$('#nav').innerHTML=TABS.map(x=>`<button class="${x[0]==t?'on':''}" onclick="go('${x[0]}')"><span>${x[1]}</span>${x[2]}</button>`).join('');
+ try{await load()}catch(e){return fail(e)}render()}
+function render(){const v={home:vHome,cli:vCli,sale:vSale,pay:vPay,prod:vProd,hist:vHist}[S.tab];$('#app').innerHTML=v()}
+// ---------- início ----------
+function vHome(){const a=S.ven.filter(v=>v.status=='ativa'),p=S.pag.filter(x=>x.status=='ativo');const s=(l,k)=>l.reduce((t,x)=>t+Number(x[k]),0);
+ const dev=S.sal.filter(x=>Number(x.saldo)>0).sort((a,b)=>b.saldo-a.saldo),aRec=dev.reduce((t,x)=>t+Number(x.saldo),0);
+ const empty=!S.cli.length?`<div class=card>Bem-vindo! Comece cadastrando seu primeiro cliente em <b>Clientes</b>.</div>`:'';
+ const c=(k,v)=>`<div class=card><div class=k>${k}</div><div class=v>${v}</div></div>`;
+ return empty+`<div class=grid>${c('Total de vendas',brl(s(a,'total')))}${c('Custo dos produtos',brl(s(a,'custo_total')))}${c('Lucro bruto',brl(s(a,'lucro_bruto')))}${c('Total recebido',brl(s(p,'valor')))}${c('Dívidas em aberto',brl(aRec))}${c('Clientes / Produtos',S.cli.length+' / '+S.prod.length)}</div>
+ <div class=card><h2>Quem deve</h2>${dev.map(x=>`<div class=row><span>${esc(x.nome)}</span><b class=neg>${brl(x.saldo)}</b></div>`).join('')||'Nenhuma pendência.'}</div>
+ <div class=card><h2>Vendas recentes</h2>${a.slice(0,5).map(v=>`<div class=row><span>${nome(v.cliente_id)}<br><small>${dt(v.criado_em)}</small></span><b>${brl(v.total)}</b></div>`).join('')||'Sem vendas.'}</div>
+ <div class=card><h2>Pagamentos recentes</h2>${p.slice(0,5).map(v=>`<div class=row><span>${nome(v.cliente_id)}<br><small>${dt(v.data_pagamento)} · ${v.forma}</small></span><b>${brl(v.valor)}</b></div>`).join('')||'Sem pagamentos.'}</div>`}
+// ---------- clientes ----------
+function vCli(){if(S.open)return vFicha(S.open);const q=(S.f.q||'').toLowerCase();
+ const l=S.cli.filter(c=>!q||c.nome.toLowerCase().includes(q)||(c.telefone||'').includes(q));
+ return `<div class=card><h2>Novo cliente</h2><input id=n placeholder="Nome completo"><input id=t inputmode=tel placeholder="Telefone / WhatsApp"><input id=o placeholder="Observações"><button class=p onclick=addCli()>Cadastrar</button></div>
+ <input placeholder="🔍 Buscar por nome ou telefone" value="${esc(S.f.q||'')}" oninput="S.f.q=this.value;render();this.focus()">
+ <div class=card>${l.map(c=>`<div class=row onclick="S.open='${c.id}';render()"><span>${esc(c.nome)}<br><small>${esc(c.telefone||'')}</small></span><b class="${saldoDe(c.id)>0?'neg':''}">${saldoDe(c.id)<0?'crédito '+brl(-saldoDe(c.id)):brl(saldoDe(c.id))}</b></div>`).join('')||'Nenhum cliente.'}</div>`}
+async function addCli(){if(S.busy)return;const nm=$('#n').value.trim(),tel=$('#t').value.trim();if(nm.length<2)return toast('Informe o nome completo.',1);
+ const dig=x=>x.replace(/\D/g,'');const sim=S.cli.find(c=>c.nome.toLowerCase()==nm.toLowerCase()||(dig(tel).length>=8&&dig(c.telefone||'')==dig(tel)));
+ if(sim&&!confirm(`Já existe "${sim.nome}" (${sim.telefone||'sem telefone'}). Cadastrar mesmo assim?`))return;
+ S.busy=true;const{error}=await sb.from('clientes').insert({nome:nm,telefone:tel||null,whatsapp:tel||null,observacoes:$('#o').value||null});S.busy=false;
+ if(error)return fail(error);toast('Cliente cadastrado.');go('cli')}
+function vFicha(id){const c=S.cli.find(x=>x.id===id),sd=saldoDe(id),sa=S.sal.find(x=>x.cliente_id===id)||{};
+ return `<button class=s onclick="S.open=null;render()">← Voltar</button><div class=card><h2>${esc(c.nome)}</h2>${esc(c.telefone||'')}<br><small>Cadastro: ${dt(c.criado_em)}</small>
+ <div class=grid><div><div class=k>Total comprado</div><b>${brl(sa.total_comprado)}</b></div><div><div class=k>Total pago</div><b>${brl(sa.total_pago)}</b></div></div>
+ <div class=k>${sd<0?'Crédito do cliente':'Saldo devedor'}</div><div class="v ${sd>0?'neg':''}">${brl(Math.abs(sd))}</div></div>
+ <div class=card><h2>Compras</h2>${S.ven.filter(v=>v.cliente_id==id).map(vv=>`<div class=row><span class="${vv.status!='ativa'?'cut':''}">${dt(vv.criado_em)} · ${brl(vv.total)} ${vv.status!='ativa'?'<span class=tag>cancelada</span>':''}</span>${vv.status=='ativa'?`<button class=d onclick="cancel('v','${vv.id}')">Cancelar</button>`:''}</div>`).join('')||'—'}</div>
+ <div class=card><h2>Pagamentos</h2>${S.pag.filter(v=>v.cliente_id==id).map(p=>`<div class=row><span class="${p.status!='ativo'?'cut':''}">${dt(p.data_pagamento)} · ${brl(p.valor)} · ${p.forma} ${p.status!='ativo'?'<span class=tag>estornado</span>':''}</span>${p.status=='ativo'?`<button class=d onclick="cancel('p','${p.id}')">Estornar</button>`:''}</div>`).join('')||'—'}</div>`}
+async function cancel(t,id){const m=prompt(t=='v'?'Motivo do cancelamento da venda (o registro continua no histórico):':'Motivo do estorno do pagamento (o registro continua no histórico):');if(m===null)return;if(m.trim().length<3)return toast('Informe um motivo.',1);
+ const{error}=await sb.rpc(t=='v'?'cancelar_venda':'estornar_pagamento',{p_id:id,p_motivo:m.trim()});if(error)return fail(error);toast('Registrado.');const o=S.open;await load();S.open=o;render()}
+// ---------- produtos ----------
+function vProd(){return `<div class=card><h2>Novo produto</h2><input id=pn placeholder="Nome"><input id=pc placeholder="Código (opcional)"><div class=grid><div><label>Custo (R$)</label><input id=pk inputmode=decimal placeholder="80,00"></div><div><label>Preço sugerido (R$)</label><input id=pv inputmode=decimal placeholder="120,00"></div></div><button class=p onclick=addProd()>Cadastrar</button></div>
+ <div class=card>${S.prod.map(p=>`<div class=row><span>${esc(p.nome)}<br><small>custo ${brl(p.custo)}</small></span><b>${brl(p.preco_sugerido)}</b></div>`).join('')||'Nenhum produto.'}</div>`}
+async function addProd(){if(S.busy)return;const nm=$('#pn').value.trim(),k=num($('#pk').value),v=num($('#pv').value);
+ if(nm.length<2)return toast('Informe o nome.',1);if(isNaN(k)||k<0||isNaN(v)||v<0)return toast('Custo e preço devem ser valores válidos (ex.: 80,00).',1);
+ S.busy=true;const{error}=await sb.from('produtos').insert({nome:nm,codigo:$('#pc').value.trim()||null,custo:k,preco_sugerido:v});S.busy=false;
+ if(error)return fail(error.code=='23505'?{message:'Já existe um produto com esse código.'}:error);toast('Produto cadastrado.');go('prod')}
+// ---------- vender ----------
+const newSale=()=>S.sale={key:crypto.randomUUID(),rows:[{}]};
+function rd(){S.sale.rows=S.sale.rows.map((_,i)=>({pid:$('#p'+i).value,d:$('#d'+i).value,q:$('#q'+i).value,c:$('#c'+i).value,v:$('#v'+i).value}));S.sale.cli=$('#cli').value}
+function vSale(){if(!S.sale)newSale();const s=S.sale;
+ const rows=s.rows.map((r,i)=>`<div class=card><select id=p${i} onchange="pick(${i})"><option value="">Escolher produto…</option>${S.prod.map(p=>`<option value="${p.id}" ${r.pid==p.id?'selected':''}>${esc(p.nome)}</option>`).join('')}</select><input id=d${i} placeholder="Descrição" value="${esc(r.d)}"><div class=g3><div><label>Qtd</label><input id=q${i} inputmode=decimal value="${esc(r.q??'1')}" oninput=tot()></div><div><label>Custo un.</label><input id=c${i} inputmode=decimal value="${esc(r.c)}" oninput=tot()></div><div><label>Preço un.</label><input id=v${i} inputmode=decimal value="${esc(r.v)}" oninput=tot()></div></div></div>`).join('');
+ return `<h2>Nova venda</h2><div class=card><label>Cliente</label><select id=cli onchange=rd()><option value="">Selecione…</option>${S.cli.map(c=>`<option value="${c.id}" ${s.cli==c.id?'selected':''}>${esc(c.nome)}</option>`).join('')}</select></div>${rows}
+ <button class=s onclick="rd();S.sale.rows.push({});render()">+ Adicionar produto</button>
+ <div class=card><label>Desconto (R$)</label><input id=dsc inputmode=decimal value="${esc(s.dsc||'')}" oninput=tot()><label>Observações</label><input id=obs value="${esc(s.obs||'')}">
+ <div class=k>Total</div><div class=v id=T>R$ 0,00</div><div class=k id=L></div></div><button class=p id=sv onclick=saveSale()>Salvar venda</button>`}
+function pick(i){const p=S.prod.find(x=>x.id==$('#p'+i).value);if(p){$('#d'+i).value=p.nome;$('#c'+i).value=String(p.custo).replace('.',',');$('#v'+i).value=String(p.preco_sugerido).replace('.',',')}tot()}
+function items(){return S.sale.rows.map((_,i)=>{const d=$('#d'+i).value.trim(),q=num($('#q'+i).value),c=num($('#c'+i).value),v=num($('#v'+i).value);
+ if(!d)throw{message:`Item ${i+1}: informe o produto.`};if(isNaN(q)||q<=0)throw{message:`Item ${i+1}: quantidade inválida.`};if(isNaN(c)||c<0||isNaN(v)||v<0)throw{message:`Item ${i+1}: custo ou preço inválido.`};
+ return{produto_id:$('#p'+i).value||'',descricao:d,quantidade:q,custo_unit:c,preco_unit:v}})}
+function tot(){try{const it=items(),b=it.reduce((t,x)=>t+x.quantidade*x.preco_unit,0),k=it.reduce((t,x)=>t+x.quantidade*x.custo_unit,0),d=num($('#dsc').value||'0')||0;
+ $('#T').textContent=brl(b-d);$('#L').textContent='Lucro bruto: '+brl(b-d-k)}catch{ $('#T').textContent='—';$('#L').textContent=''}}
+async function saveSale(){if(S.busy)return;try{rd();const cid=$('#cli').value;if(!cid)throw{message:'Selecione um cliente.'};const it=items(),d=$('#dsc').value.trim()?num($('#dsc').value):0;
+ if(isNaN(d)||d<0)throw{message:'Desconto inválido.'};S.busy=true;$('#sv').disabled=true;
+ const{error}=await sb.rpc('registrar_venda',{p_cliente:cid,p_itens:it,p_desconto:d,p_obs:$('#obs').value||null,p_chave:S.sale.key});if(error)throw error;
+ toast('Venda salva.');S.sale=null;S.busy=false;go('cli')}catch(e){S.busy=false;const b=$('#sv');if(b)b.disabled=false;fail(e)}}
+// ---------- receber ----------
+function vPay(){if(!S.pay)S.pay={key:crypto.randomUUID()};const hoje=new Date().toISOString().slice(0,10);
+ return `<h2>Receber pagamento</h2><div class=card><label>Cliente</label><select id=pc onchange=showSal()><option value="">Selecione…</option>${S.cli.map(c=>`<option value="${c.id}">${esc(c.nome)}</option>`).join('')}</select><div class=k id=sd></div>
+ <label>Valor recebido (R$)</label><input id=pvlr inputmode=decimal><label>Forma</label><select id=pf>${['Pix','Dinheiro','Transferência','Cartão','Outro'].map(f=>`<option>${f}</option>`).join('')}</select><label>Data</label><input id=pd type=date value="${hoje}"><label>Observações</label><input id=po></div><button class=p id=ps onclick=savePay()>Confirmar pagamento</button>`}
+function showSal(){const id=$('#pc').value;if(!id)return $('#sd').textContent='';const s=saldoDe(id);$('#sd').innerHTML=s<0?`Crédito atual: <b>${brl(-s)}</b>`:`Saldo devedor atual: <b class=neg>${brl(s)}</b>`}
+async function savePay(){if(S.busy)return;try{const id=$('#pc').value,v=num($('#pvlr').value);if(!id)throw{message:'Selecione um cliente.'};if(isNaN(v)||v<=0)throw{message:'Informe um valor válido, maior que zero.'};
+ const ex=v-Math.max(saldoDe(id),0);if(ex>0&&!confirm(`Este valor é ${brl(ex)} maior que a dívida. A diferença ficará como CRÉDITO do cliente. Confirmar?`))return;
+ S.busy=true;$('#ps').disabled=true;const{error}=await sb.rpc('registrar_pagamento',{p_cliente:id,p_valor:v,p_forma:$('#pf').value,p_data:$('#pd').value,p_obs:$('#po').value||null,p_chave:S.pay.key});if(error)throw error;
+ toast('Pagamento registrado.');S.pay=null;S.busy=false;go('cli')}catch(e){S.busy=false;const b=$('#ps');if(b)b.disabled=false;fail(e)}}
+// ---------- histórico e relatório ----------
+function mov(){const f=S.f;let l=[...S.ven.map(v=>({t:'Venda',d:v.criado_em,c:v.cliente_id,desc:v.observacoes||'Venda',val:+v.total,custo:+v.custo_total,luc:+v.lucro_bruto,forma:'',st:v.status})),
+ ...S.pag.map(p=>({t:'Pagamento',d:p.data_pagamento,c:p.cliente_id,desc:p.observacoes||'Pagamento',val:+p.valor,custo:'',luc:'',forma:p.forma,st:p.status}))];
+ return l.filter(x=>(!f.c||x.c==f.c)&&(!f.t||x.t==f.t)&&(!f.a||x.d.slice(0,10)>=f.a)&&(!f.b||x.d.slice(0,10)<=f.b)).sort((a,b)=>b.d.localeCompare(a.d))}
+function vHist(){const f=S.f,l=mov(),ok=l.filter(x=>x.st=='ativa'||x.st=='ativo'),vs=ok.filter(x=>x.t=='Venda'),sum=(a,k)=>a.reduce((t,x)=>t+(+x[k]||0),0);
+ return `<h2>Histórico e relatório</h2><div class=card><select onchange="S.f.c=this.value;render()"><option value="">Todos os clientes</option>${S.cli.map(c=>`<option value="${c.id}" ${f.c==c.id?'selected':''}>${esc(c.nome)}</option>`).join('')}</select>
+ <select onchange="S.f.t=this.value;render()"><option value="">Vendas e pagamentos</option><option ${f.t=='Venda'?'selected':''}>Venda</option><option ${f.t=='Pagamento'?'selected':''}>Pagamento</option></select>
+ <div class=grid><div><label>De</label><input type=date value="${f.a||''}" onchange="S.f.a=this.value;render()"></div><div><label>Até</label><input type=date value="${f.b||''}" onchange="S.f.b=this.value;render()"></div></div></div>
+ <div class=card><div class=grid><div><div class=k>Vendas</div><b>${brl(sum(vs,'val'))}</b></div><div><div class=k>Lucro bruto</div><b>${brl(sum(vs,'luc'))}</b></div><div><div class=k>Recebido</div><b>${brl(sum(ok.filter(x=>x.t=='Pagamento'),'val'))}</b></div></div></div>
+ <button class=s onclick=csv()>⬇ Exportar CSV (abre na planilha)</button>
+ <div class=card>${l.map(x=>`<div class=row><span class="${x.st=='cancelada'||x.st=='estornado'?'cut':''}">${x.t} · ${nome(x.c)}<br><small>${dt(x.d)} ${x.forma}</small></span><b>${brl(x.val)}</b></div>`).join('')||'Nada neste filtro.'}</div>`}
+function csv(){const h='Tipo;Data;Cliente;Descrição;Valor;Custo;Lucro;Forma;Situação\n',q=s=>'"'+String(s).replace(/"/g,'""')+'"';
+ const b=new Blob(['\ufeff'+h+mov().map(x=>[x.t,dt(x.d),q((S.cli.find(c=>c.id==x.c)||{}).nome),q(x.desc),String(x.val).replace('.',','),String(x.custo).replace('.',','),String(x.luc).replace('.',','),x.forma,x.st].join(';')).join('\n')],{type:'text/csv'});
+ const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='movimentacoes.csv';a.click()}
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');
+</script></body></html>
